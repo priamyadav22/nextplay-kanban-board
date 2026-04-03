@@ -14,7 +14,10 @@ type TaskStatus = 'todo' | 'in_progress' | 'in_review' | 'done'
 type Task = {
   id: string
   title: string
+  description: string | null
   status: TaskStatus
+  priority: string | null
+  due_date: string | null
   user_id: string
   created_at: string
 }
@@ -35,6 +38,10 @@ function App() {
   const [authError, setAuthError] = useState('')
   const [taskError, setTaskError] = useState('')
   const [newTaskTitle, setNewTaskTitle] = useState('')
+  const [newTaskDescription, setNewTaskDescription] = useState('')
+  const [newTaskPriority, setNewTaskPriority] = useState('normal')
+  const [newTaskDueDate, setNewTaskDueDate] = useState('')
+
 
   useEffect(() => {
     let mounted = true
@@ -95,19 +102,26 @@ function App() {
     }
   }
 
-  async function createTestTask(title: string) {
-    if (!user?.id || !title.trim()) return
+  async function createTask() {
+    if (!user?.id || !newTaskTitle.trim()) return
 
     try {
       setTaskError('')
       const { error } = await supabase.from('tasks').insert([
         {
-          title,
+          title: newTaskTitle.trim(),
+          description: newTaskDescription.trim() || null,
+          priority: newTaskPriority,
+          due_date: newTaskDueDate || null,
           status: 'todo',
           user_id: user.id,
         },
       ])
       if (error) throw error
+      setNewTaskTitle('')
+      setNewTaskDescription('')
+      setNewTaskPriority('')
+      setNewTaskDueDate('')
 
       await fetchTasks()
     } catch (error: any) {
@@ -179,21 +193,37 @@ function App() {
           <p className="subtext">Guest user id: {user?.id}</p>
         </div>
 
-        <div className="task-input-wrapper">
+        <div className="task-form">
           <input
             type="text"
-            placeholder="Add a task..."
+            placeholder="Task title"
             value={newTaskTitle}
             onChange={(e) => setNewTaskTitle(e.target.value)}
             />
-            <button
-              className="create-button"
-              onClick={() => {
-                createTestTask(newTaskTitle)
-                setNewTaskTitle('')
-              }}
+            <input
+            type="text"
+            placeholder="Description (optional)"
+            value={newTaskDescription}
+            onChange={(e) => setNewTaskDescription(e.target.value)}
+            />
+
+            <select
+              value={newTaskPriority}
+              onChange={(e) => setNewTaskPriority(e.target.value)}
               >
-                Add
+                <option value="low">Low</option>
+                <option value="normal">Normal</option>
+                <option value="high">High</option>
+              </select>
+            
+            <input
+              type="date"
+              value={newTaskDueDate}
+              onChange={(e) => setNewTaskDueDate(e.target.value)}
+              />
+
+            <button className="create-button" onClick={createTask}>
+                Add Task
               </button>
 
         </div>
@@ -232,7 +262,23 @@ function App() {
                     >
                   
                     <h3>{task.title}</h3>
-                    <p className="task-status">{task.status}</p>
+                    {task.description && (
+                      <p className="task-description">{task.description}</p>
+                    )}
+
+                    <div className="task-meta">
+                      {task.priority && (
+                        <span className={`priority-badge priority-${task.priority}`}>
+                          {task.priority}
+                        </span>
+                      )}
+                      {task.due_date && (
+                        <span className="due-date">
+                          Due {task.due_date}
+                        </span>
+                      )}
+                    </div>
+            
                   </article>
                   )}
                   </Draggable>
