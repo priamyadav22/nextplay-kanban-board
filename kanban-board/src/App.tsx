@@ -42,7 +42,8 @@ function App() {
   const [newTaskPriority, setNewTaskPriority] = useState('normal')
   const [newTaskDueDate, setNewTaskDueDate] = useState('')
 
-
+//Ensure every user has a session (anonymous auth removes login friction
+// while still giving each user a unique ID for data isolation)
   useEffect(() => {
     let mounted = true
 
@@ -81,6 +82,8 @@ function App() {
     }
   }, [])
 
+  //Fetch tasks for the current user
+  //Row Level Security(RLS) automatically filters data by auth.uid()
   async function fetchTasks() {
     try {
       setTaskLoading(true)
@@ -101,7 +104,8 @@ function App() {
       setTaskLoading(false)
     }
   }
-
+//Create a new task tied to the current user session
+//Additional fields (priority, due date, description) support richer task management
   async function createTask() {
     if (!user?.id || !newTaskTitle.trim()) return
 
@@ -136,6 +140,8 @@ function App() {
     }
   }, [user?.id])
 
+  //Update task status when moved between columns (drag-and-drop)
+  //Persist change in Supabase so UI stays in sync with backend
   async function updateTaskStatus(taskId: string, newStatus: TaskStatus) {
     try {
       setTaskError('')
@@ -153,6 +159,22 @@ function App() {
     }
   }
 
+  //Delete a task by ID
+  //RLS ensures users can only delete their own tasks
+  async function deleteTask(taskId: string) {
+    try {
+      setTaskError('')
+      const { error } = await supabase.from('tasks').delete().eq('id', taskId)
+      if (error) throw error
+      await fetchTasks()
+    } catch (error: any) {
+      console.error('Delete task failed:', error)
+      setTaskError(error.message || 'Failed to delete task.')
+    }
+  }
+ 
+  //Handle drag-and-drop interactions
+  //Determines destination column and updates task status accordingly
   function handleDragEnd(result: any) {
     const { destination, source, draggableId } = result
 
@@ -170,12 +192,18 @@ function App() {
     updateTaskStatus(draggableId, destinationColumn)
   }
 
+  //Group tasks by status to render them into Kanban columns
   const tasksByStatus: Record<TaskStatus, Task[]> = {
     todo: tasks.filter((task) => task.status === 'todo'),
     in_progress: tasks.filter((task) => task.status === 'in_progress'),
     in_review: tasks.filter((task) => task.status === 'in_review'),
     done: tasks.filter((task) => task.status === 'done'),
   }
+  const totalTasks = tasks.length 
+  const completedTasks = tasksByStatus.done.length 
+  const overdueTasks = tasks.filter(
+    (task) => task.due_date && getDueDateStatus(task.due_date) === 'overdue').length
+  
 
   if (authLoading) {
     return <div className="page-state">Starting guest session...</div>
@@ -185,12 +213,58 @@ function App() {
     return <div className="page-state">Error: {authError}</div>
   }
 
+  //Determine urgency level of a task's due date (normal, soon, overdue)
+  //Used to visually highlight time-sensitive tasks
+  function getDueDateStatus(dueDate: string | null) {
+    if (!dueDate) return 'normal'
+    const today = new Date()
+    const due = new Date(dueDate)
+
+    today.setHours(0, 0, 0, 0)
+    due.setHours(0, 0, 0, 0)
+    const diff = (due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
+
+    if (diff < 0 ) return 'overdue'
+    if (diff <=2) return 'soon'
+    return 'normal'
+  }
+
+  //Format due date into a human-relatable string for better UX
+  function formatDueDate(dueDate: string | null) {
+    if (!dueDate) return ''
+    const date = new Date(dueDate)
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
+  }
+
   return (
     <main className="board-page">
       <header className="board-header">
+        <div className="board-stats">
+          <div className="stat-pill">
+          <span className="stat-label">Total</span>
+          <span className="stat-value">{totalTasks}</span>
+        </div>
+        <div className="stat-pill">
+          <span className="stat-label">Done</span>
+          <span className="stat-value">{completedTasks}</span>
+        </div>
+        <div className="stat-pill stat-pill-alert">
+          <span className="stat-label">Overdue</span>
+          <span className="stat-value">{overdueTasks}</span>
+
+        </div>
+        </div>
+
+
         <div>
           <h1>Kanban Board</h1>
-          <p className="subtext">Guest user id: {user?.id}</p>
+          <p className="subtext">
+            Guest session active: tasks persist locally
+          </p>
         </div>
 
         <div className="task-form">
@@ -231,13 +305,14 @@ function App() {
 
       {taskLoading && <p className="info-message">Loading tasks...</p>}
       {taskError && <p className="error-message">Error: {taskError}</p>}
+
     <DragDropContext onDragEnd={handleDragEnd}>
       <section className="board-grid">
         {columns.map((column) => (
 
         <Droppable droppableId={column.key} key={column.key}>
-          {(provided) => (
-          <div className="board-column">
+          {(provided, snapshot) => (
+          <div className={`board-column ${snapshot.isDraggingOver ? 'column-drag-over' : ''}`}>
             <div className="column-header">
               <h2>{column.label}</h2>
               <span className="task-count">{tasksByStatus[column.key].length}</span>
@@ -249,7 +324,9 @@ function App() {
             {...provided.droppableProps}
             >
               {tasksByStatus[column.key].length === 0 ? (
-                <div className="empty-state">No tasks</div>
+                <div className="empty-state">
+                  <p>No tasks yet</p>
+                  <span>Drag tasks here or create one</span></div>
               ) : (
                 tasksByStatus[column.key].map((task, index) => (
                 <Draggable draggableId={task.id} index={index} key={task.id}>
@@ -273,12 +350,20 @@ function App() {
                         </span>
                       )}
                       {task.due_date && (
-                        <span className="due-date">
-                          Due {task.due_date}
+                        <span className={`due-date due-date-${getDueDateStatus(task.due_date)}`}>
+                          Due {formatDueDate(task.due_date)}
                         </span>
                       )}
                     </div>
-            
+                  <button 
+                    className="delete-task-button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      deleteTask(task.id)
+                    }}
+                    >
+                      Delete
+                    </button>
                   </article>
                   )}
                   </Draggable>
@@ -294,6 +379,7 @@ function App() {
 
         ))}
       </section>
+    
     </DragDropContext>
     </main>
   )
